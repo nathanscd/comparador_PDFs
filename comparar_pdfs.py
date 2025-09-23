@@ -2,8 +2,9 @@ import pdfplumber
 import difflib
 import hashlib
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Preformatted
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 
 def extract_paragraphs(pdf_path):
@@ -77,28 +78,39 @@ def compare_pdfs(pdf1, pdf2, similarity_threshold=0.8):
 def gerar_relatorio_pdf(iguais, diferentes, output_pdf="comparacao.pdf"):
     doc = SimpleDocTemplate(output_pdf, pagesize=A4)
     styles = getSampleStyleSheet()
-    story = []
 
+    # estilo para preservar formatação original
+    mono_style = ParagraphStyle(
+        "Mono",
+        parent=styles["Normal"],
+        fontName="Courier",
+        fontSize=9,
+        leading=12,
+        textColor=colors.black,
+    )
+
+    story = []
     story.append(Paragraph("Relatório de Comparação de PDFs", styles["Title"]))
     story.append(Spacer(1, 20))
 
     # Iguais
     story.append(Paragraph("Parágrafos Iguais ou Muito Parecidos:", styles["Heading2"]))
     for p1, p2 in iguais:
-        story.append(Paragraph(f"PDF1: {p1}", styles["Normal"]))
-        story.append(Paragraph(f"PDF2: {p2}", styles["Normal"]))
-        story.append(Spacer(1, 10))
-
-    story.append(Spacer(1, 20))
+        story.append(Preformatted(f"{p1}", mono_style))
+        story.append(Preformatted(f"{p2}", mono_style))
+        story.append(Paragraph("Resultado: IGUAL", styles["Normal"]))
+        story.append(Spacer(1, 15))
 
     # Diferentes
+    story.append(Spacer(1, 20))
     story.append(Paragraph("Parágrafos Diferentes:", styles["Heading2"]))
     for p1, p2 in diferentes:
         if p1:
-            story.append(Paragraph(f"Somente no PDF1: {p1}", styles["Normal"]))
+            story.append(Preformatted(f"{p1}", mono_style))
         if p2:
-            story.append(Paragraph(f"Somente no PDF2: {p2}", styles["Normal"]))
-        story.append(Spacer(1, 10))
+            story.append(Preformatted(f"{p2}", mono_style))
+        story.append(Paragraph("Resultado: DIFERENTE", styles["Normal"]))
+        story.append(Spacer(1, 15))
 
     doc.build(story)
     print(f"Relatório gerado: {output_pdf}")
