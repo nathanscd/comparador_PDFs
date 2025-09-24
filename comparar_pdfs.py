@@ -1,125 +1,73 @@
 import pdfplumber
-import difflib
-import hashlib
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Preformatted
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+import difflib
 
 
 def extract_paragraphs(pdf_path):
     paragraphs = []
     with pdfplumber.open(pdf_path) as pdf:
-        text = ""
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-        # separa em parágrafos: quebra dupla de linha
-        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        for pagina in pdf.pages:
+            texto = pagina.extract_text(x_tolerance=1, y_tolerance=1)
+            if texto:
+                linhas = texto.split("\n")
+                for linha in linhas:
+                    if linha.strip():
+                        paragraphs.append(linha.strip())  # cada linha vira 1 parágrafo
     return paragraphs
 
 
-def paragraph_hash(paragraph):
-    """Retorna um hash MD5 para um parágrafo normalizado."""
-    normalized = " ".join(paragraph.lower().split())  # remove espaços extras
-    return hashlib.md5(normalized.encode("utf-8")).hexdigest()
+def compare_paragraphs(p1, p2):
+    diff = difflib.ndiff(p1.split(), p2.split())
+    result = []
+    for token in diff:
+        if token.startswith("  "):
+            result.append(token[2:])  # igual
+        elif token.startswith("- "):
+            result.append(f"[REMOVIDO: {token[2:]}]")
+        elif token.startswith("+ "):
+            result.append(f"[ADICIONADO: {token[2:]}]")
+    return " ".join(result)
 
 
-def compare_pdfs(pdf1, pdf2, similarity_threshold=0.8):
-    p1 = extract_paragraphs(pdf1)
-    p2 = extract_paragraphs(pdf2)
+def generate_report(pdf1_path, pdf2_path, output_path):
+    pdf1_paragraphs = extract_paragraphs(pdf1_path)
+    pdf2_paragraphs = extract_paragraphs(pdf2_path)
 
-    # cria índices de hash
-    hash_map1 = {paragraph_hash(p): p for p in p1}
-    hash_map2 = {paragraph_hash(p): p for p in p2}
+    max_len = max(len(pdf1_paragraphs), len(pdf2_paragraphs))
 
-    iguais = []
-    diferentes = []
-
-    # primeiro passo: detectar iguais via hash
-    for h, para1 in hash_map1.items():
-        if h in hash_map2:
-            iguais.append((para1, hash_map2[h]))
-
-    # remove os já processados
-    usados1 = set([p for p, _ in iguais])
-    usados2 = set([p for _, p in iguais])
-
-    restantes1 = [p for p in p1 if p not in usados1]
-    restantes2 = [p for p in p2 if p not in usados2]
-
-    # segundo passo: verificar similaridade com difflib
-    for para1 in restantes1:
-        match_found = False
-        for para2 in restantes2:
-            ratio = difflib.SequenceMatcher(None, para1, para2).ratio()
-            if ratio >= similarity_threshold:
-                iguais.append((para1, para2))
-                match_found = True
-                break
-        if not match_found:
-            diferentes.append((para1, None))
-
-    # verificar os que sobraram no PDF2
-    for para2 in restantes2:
-        match_found = False
-        for para1 in restantes1:
-            ratio = difflib.SequenceMatcher(None, para1, para2).ratio()
-            if ratio >= similarity_threshold:
-                match_found = True
-                break
-        if not match_found:
-            diferentes.append((None, para2))
-
-    return iguais, diferentes
-
-
-def gerar_relatorio_pdf(iguais, diferentes, output_pdf="comparacao.pdf"):
-    doc = SimpleDocTemplate(output_pdf, pagesize=A4)
+    doc = SimpleDocTemplate(output_path, pagesize=A4)
     styles = getSampleStyleSheet()
-
-    # estilo para preservar formatação original
-    mono_style = ParagraphStyle(
-        "Mono",
-        parent=styles["Normal"],
-        fontName="Courier",
-        fontSize=9,
-        leading=12,
-        textColor=colors.black,
-    )
+    style_normal = styles["Normal"]
+    style_normal.wordWrap = "CJK"
+    style_bold = ParagraphStyle("Bold", parent=style_normal, fontName="Helvetica-Bold", spaceAfter=6)
 
     story = []
-    story.append(Paragraph("Relatório de Comparação de PDFs", styles["Title"]))
-    story.append(Spacer(1, 20))
 
-    # Iguais
-    story.append(Paragraph("Parágrafos Iguais ou Muito Parecidos:", styles["Heading2"]))
-    for p1, p2 in iguais:
-        story.append(Preformatted(f"{p1}", mono_style))
-        story.append(Preformatted(f"{p2}", mono_style))
-        story.append(Paragraph("Resultado: IGUAL", styles["Normal"]))
-        story.append(Spacer(1, 15))
+    for i in range(max_len):
+        p1 = pdf1_paragraphs[i] if i < len(pdf1_paragraphs) else ""
+        p2 = pdf2_paragraphs[i] if i < len(pdf2_paragraphs) else ""
+        result = compare_paragraphs(p1, p2)
 
-    # Diferentes
-    story.append(Spacer(1, 20))
-    story.append(Paragraph("Parágrafos Diferentes:", styles["Heading2"]))
-    for p1, p2 in diferentes:
-        if p1:
-            story.append(Preformatted(f"{p1}", mono_style))
-        if p2:
-            story.append(Preformatted(f"{p2}", mono_style))
-        story.append(Paragraph("Resultado: DIFERENTE", styles["Normal"]))
-        story.append(Spacer(1, 15))
+        story.append(Paragraph("PARÁGRAFO INICIAL:", style_bold))
+        story.append(Paragraph(p1 or "[VAZIO]", style_normal))
+        story.append(Spacer(1, 12))
+
+        story.append(Paragraph("PARÁGRAFO DE COMPARAÇÃO:", style_bold))
+        story.append(Paragraph(p2 or "[VAZIO]", style_normal))
+        story.append(Spacer(1, 12))
+
+        story.append(Paragraph("RESULTADO DAS DIFERENÇAS:", style_bold))
+        story.append(Paragraph(result or "Sem diferenças.", style_normal))
+        story.append(Spacer(1, 24))
 
     doc.build(story)
-    print(f"Relatório gerado: {output_pdf}")
+    print(f"Relatório gerado em: {output_path}")
+
 
 if __name__ == "__main__":
-    # >>>>>>>> TROQUE AQUI OS NOMES DOS PDFs <<<<<<<<
-    pdf1 = "GED-150179_Ago_25.pdf"
-    pdf2 = "GED 150179 - Especificação Técnica de Medidor Eletrônico Direto e Indireto-rev.pdf"
-    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-    iguais, diferentes = compare_pdfs(pdf1, pdf2)
-    gerar_relatorio_pdf(iguais, diferentes, "resultado_comparacao.pdf")
+    pdf1 = "arquivo1.pdf"
+    pdf2 = "arquivo2.pdf"
+    output = "resultado.pdf"
+    generate_report(pdf1, pdf2, output)
